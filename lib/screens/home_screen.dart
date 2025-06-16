@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:iconsax/iconsax.dart';
 import '../models/user.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   final User user;
@@ -13,9 +16,14 @@ class HomeScreen extends StatelessWidget {
         title: const Text('FitLite'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings),
+            icon: const Icon(Iconsax.setting_4),
             onPressed: () {
-              // TODO: Navigate to settings
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => SettingsScreen(user: user),
+                ),
+              );
             },
           ),
         ],
@@ -57,19 +65,19 @@ class HomeScreen extends StatelessWidget {
                           context,
                           'Steps',
                           user.dailySteps.toString(),
-                          Icons.directions_walk,
+                          FontAwesomeIcons.personWalking,
                         ),
                         _buildStatItem(
                           context,
                           'Calories',
                           user.dailyCalories.toString(),
-                          Icons.local_fire_department,
+                          FontAwesomeIcons.fire,
                         ),
                         _buildStatItem(
                           context,
                           'Workout',
                           '${user.dailyWorkoutMinutes}m',
-                          Icons.fitness_center,
+                          Icons.timelapse,
                         ),
                       ],
                     ),
