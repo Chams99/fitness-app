@@ -3,7 +3,6 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'screens/home_screen.dart';
 import 'screens/workouts_screen.dart';
 import 'screens/profile_screen.dart';
-import 'screens/settings_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/food_scanner_screen.dart';
 import 'models/user.dart';

@@ -4,6 +4,7 @@ import 'package:camera/camera.dart';
 import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
 import '../services/food_api_service.dart';
 import '../services/ai_recognition_service.dart';
+import '../services/food_recognition_api_service.dart';
 
 class FoodScannerScreen extends StatefulWidget {
   const FoodScannerScreen({super.key});
@@ -17,6 +18,8 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
   CameraController? _controller;
   final FoodApiService _foodApiService = FoodApiService();
   final AIRecognitionService _aiService = AIRecognitionService();
+  final FoodRecognitionApiService _recognitionService =
+      FoodRecognitionApiService();
   bool _isProcessing = false;
   bool _isInitialized = false;
   String? _errorMessage;
@@ -26,6 +29,10 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
   bool _isFocusing = false;
   List<String> _recognizedLabels = [];
   bool _isAIAvailable = true;
+  DateTime? _lastCaptureTime;
+  static const Duration _minCaptureInterval = Duration(seconds: 2);
+  List<dynamic> _rawLabels = [];
+  double _confidence = 0.0;
 
   @override
   void initState() {
@@ -78,7 +85,7 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
 
       _controller = CameraController(
         backCamera,
-        ResolutionPreset.medium,
+        ResolutionPreset.high,
         enableAudio: false,
         imageFormatGroup: ImageFormatGroup.yuv420,
       );
@@ -90,15 +97,23 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
 
         // Configure camera features with error handling
         try {
-          await _controller!.setFocusMode(FocusMode.auto);
-        } catch (e) {
-          print('Failed to set focus mode: $e');
-        }
+          // Set optimal capture settings
+          await Future.wait([
+            _controller!.setFocusMode(FocusMode.auto),
+            _controller!.setExposureMode(ExposureMode.auto),
+            _controller!.setFlashMode(FlashMode.off),
+          ]);
 
-        try {
-          await _controller!.setExposureMode(ExposureMode.auto);
+          // Wait for camera to stabilize
+          await Future.delayed(const Duration(milliseconds: 500));
+
+          // Set exposure and focus points
+          await Future.wait([
+            _controller!.setExposurePoint(Offset(0.5, 0.5)),
+            _controller!.setFocusPoint(Offset(0.5, 0.5)),
+          ]);
         } catch (e) {
-          print('Failed to set exposure mode: $e');
+          print('Failed to configure camera features: $e');
         }
 
         setState(() {
@@ -124,23 +139,38 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
   Future<void> _processImage() async {
     if (_controller == null ||
         !_controller!.value.isInitialized ||
-        _imageLabeler == null)
+        _imageLabeler == null ||
+        _isProcessing ||
+        _isFocusing) {
       return;
-    if (_isProcessing || _isFocusing) return;
+    }
+
+    // Check if enough time has passed since last capture
+    if (_lastCaptureTime != null &&
+        DateTime.now().difference(_lastCaptureTime!) < _minCaptureInterval) {
+      return;
+    }
 
     setState(() {
       _isProcessing = true;
       _errorMessage = null;
       _recognizedLabels = [];
+      _foodData = null;
     });
 
     try {
       // Focus before taking picture
       _isFocusing = true;
       try {
-        await _controller!.setFocusPoint(Offset(0.5, 0.5));
+        // Lock focus and exposure
+        await Future.wait([
+          _controller!.setFocusPoint(Offset(0.5, 0.5)),
+          _controller!.setExposurePoint(Offset(0.5, 0.5)),
+        ]);
         await _controller!.setFocusMode(FocusMode.locked);
-        await Future.delayed(const Duration(milliseconds: 500));
+
+        // Wait for focus to lock
+        await Future.delayed(const Duration(milliseconds: 800));
       } catch (e) {
         print('Error during focus: $e');
       }
@@ -151,7 +181,18 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
       // Take picture with error handling
       XFile? image;
       try {
+        // Ensure camera is ready
+        if (!_controller!.value.isInitialized) {
+          throw Exception('Camera not initialized');
+        }
+
+        // Take the picture
         image = await _controller!.takePicture();
+        _lastCaptureTime = DateTime.now();
+        print('Image saved at: \\${image.path}');
+
+        // Reset focus after capture
+        await _controller!.setFocusMode(FocusMode.auto);
       } catch (e) {
         print('Error taking picture: $e');
         if (mounted) {
@@ -165,86 +206,36 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
 
       if (_isDisposed || image == null) return;
 
-      // Reset focus after capture
-      try {
-        await _controller!.setFocusMode(FocusMode.auto);
-      } catch (e) {
-        print('Error resetting focus: $e');
-      }
+      // Process image using the recognition service
+      final result = await _recognitionService.recognizeFoodFromImage(
+        File(image.path),
+      );
 
-      // Try AI recognition first
-      if (_isAIAvailable) {
-        try {
-          final labels = await _aiService.recognizeFood(File(image.path));
-          if (labels.isNotEmpty) {
-            setState(() {
-              _recognizedLabels = labels;
-            });
+      if (_isDisposed) return;
 
-            final bestMatch = await _aiService.getBestFoodMatch(labels);
-            if (bestMatch != null) {
-              final foodData = await _foodApiService.searchFood(bestMatch);
-              if (foodData != null) {
-                if (mounted) {
-                  setState(() {
-                    _foodData = foodData;
-                  });
-                }
-                return;
-              }
-            }
-          }
-        } catch (e) {
-          print('AI recognition failed: $e');
-          _isAIAvailable = false;
-        }
-      }
-
-      // Fallback to ML Kit if AI fails
-      try {
-        final inputImage = InputImage.fromFilePath(image.path);
-        final labels = await _imageLabeler!.processImage(inputImage);
-
-        if (_isDisposed) return;
-
-        if (labels.isEmpty) {
-          setState(() {
-            _errorMessage = 'No food items detected in the image';
-          });
-          return;
-        }
-
-        // Get the most confident label
-        final topLabel = labels.first;
-        final foodData = await _foodApiService.searchFood(topLabel.label);
-
-        if (_isDisposed) return;
-
-        if (foodData == null) {
-          setState(() {
-            _errorMessage =
-                'Could not find nutritional information for ${topLabel.label}';
-          });
-          return;
-        }
-
+      if (!result['success']) {
         if (mounted) {
           setState(() {
-            _foodData = foodData;
+            _errorMessage = result['error'];
+            _foodData = null;
           });
         }
-      } catch (e) {
-        print('Error processing image with ML Kit: $e');
-        if (mounted) {
-          setState(() {
-            _errorMessage = 'Error processing image. Please try again.';
-          });
-        }
+        return;
+      }
+
+      if (mounted) {
+        setState(() {
+          _foodData = result['food_data'];
+          _recognizedLabels = List<String>.from(result['recognized_labels']);
+          _rawLabels = result['raw_labels'] ?? [];
+          _confidence = result['confidence'] ?? 0.0;
+        });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           _errorMessage = 'Error processing image: $e';
+          _foodData = null;
         });
       }
     } finally {
@@ -311,6 +302,22 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (_confidence < 0.3)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8.0),
+                      child: Row(
+                        children: [
+                          Icon(Icons.warning, color: Colors.orange),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Low confidence: The result may not be accurate.',
+                              style: TextStyle(color: Colors.orange),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   Row(
                     children: [
                       if (_foodData!['image_url'] != null)
@@ -366,6 +373,29 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
                       ),
                     ],
                   ),
+                  const SizedBox(height: 12),
+                  if (_rawLabels.isNotEmpty)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'What the AI sees:',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        ..._rawLabels.map(
+                          (r) => Text(
+                            '${r['label']} (score: ${(r['score'] as double).toStringAsFixed(3)})',
+                            style: TextStyle(
+                              color:
+                                  (r['score'] as double) >= 0.3
+                                      ? Colors.black
+                                      : Colors.grey,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                    ),
                   const SizedBox(height: 16),
                   const Text(
                     'Nutritional Information (per 100g)',

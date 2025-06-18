@@ -2,21 +2,60 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter/foundation.dart';
 
 class AIRecognitionService {
   static const String _apiUrl =
-      'https://api-inference.huggingface.co/models/google/vit-base-patch16-224';
+      'https://api-inference.huggingface.co/models/nateraw/food';
   static final String _apiKey = dotenv.env['HUGGING_FACE_API_KEY']!;
+
+  // Cache for storing recent results
+  static final Map<String, List<String>> _resultCache = {};
+  static const Duration _cacheDuration = Duration(minutes: 30);
 
   Future<List<String>> recognizeFood(File imageFile) async {
     try {
+      // Check cache first
+      final String cacheKey = await _generateCacheKey(imageFile);
+      if (_resultCache.containsKey(cacheKey)) {
+        final cachedResult = _resultCache[cacheKey]!;
+        return cachedResult;
+      }
+
+      // Process image in isolate
+      final List<String> labels = await compute(_processImageInIsolate, {
+        'imagePath': imageFile.path,
+        'apiUrl': _apiUrl,
+        'apiKey': _apiKey,
+      });
+
+      // Cache the result
+      _resultCache[cacheKey] = labels;
+
+      return labels;
+    } catch (e) {
+      print('Error in AI recognition: $e');
+      return [];
+    }
+  }
+
+  Future<String> _generateCacheKey(File imageFile) async {
+    final bytes = await imageFile.readAsBytes();
+    return base64Encode(bytes).substring(0, 32); // Use first 32 chars as key
+  }
+
+  static Future<List<String>> _processImageInIsolate(
+    Map<String, dynamic> params,
+  ) async {
+    try {
+      final File imageFile = File(params['imagePath']);
       final bytes = await imageFile.readAsBytes();
       final base64Image = base64Encode(bytes);
 
       final response = await http.post(
-        Uri.parse(_apiUrl),
+        Uri.parse(params['apiUrl']),
         headers: {
-          'Authorization': 'Bearer $_apiKey',
+          'Authorization': 'Bearer ${params['apiKey']}',
           'Content-Type': 'application/json',
         },
         body: jsonEncode({'inputs': base64Image}),
@@ -25,25 +64,34 @@ class AIRecognitionService {
       if (response.statusCode == 200) {
         final List<dynamic> results = jsonDecode(response.body);
         return results
-            .where(
-              (result) => result['score'] > 0.1,
-            ) // Filter low confidence results
+            .where((result) => result['score'] > 0.5)
             .map((result) => result['label'].toString().toLowerCase())
             .toList();
       } else {
         print('Error from Hugging Face API: ${response.statusCode}');
+        print('Response Body: ${response.body}');
         return [];
       }
     } catch (e) {
-      print('Error in AI recognition: $e');
+      print('Error in AI recognition isolate: $e');
       return [];
     }
   }
 
   Future<String?> getBestFoodMatch(List<String> labels) async {
+    if (labels.isEmpty) {
+      print('No labels provided to getBestFoodMatch');
+      return null;
+    }
+
+    // Process in isolate
+    return compute(_getBestFoodMatchInIsolate, labels);
+  }
+
+  static String? _getBestFoodMatchInIsolate(List<String> labels) {
     if (labels.isEmpty) return null;
 
-    // Define a list of common food-related keywords to prioritize
+    // Define food-related keywords to prioritize
     final List<String> foodKeywords = [
       'fruit',
       'vegetable',
@@ -154,38 +202,29 @@ class AIRecognitionService {
       'meal',
     ];
 
-    // Clean and format labels for better matching
+    // Clean and format labels
     final cleanedLabels =
         labels
-            .map((label) {
-              // Remove generic non-food terms and actions
-              return label
-                  .replaceAll(
-                    RegExp(
-                      r'\b(food|dish|meal|product|item|object|plant|animal|eating|drinking|serving|cuisine|ingredient|natural|fresh|organic)\b',
-                    ),
-                    '',
-                  )
-                  .replaceAll(
-                    RegExp(r'\s*\(.*?\)\s*'),
-                    '',
-                  ) // Remove text in parentheses
-                  .replaceAll(
-                    RegExp(r'\s*,\s*'),
-                    ' ',
-                  ) // Replace commas with spaces
-                  .replaceAll(
-                    RegExp(r'\s+'),
-                    ' ',
-                  ) // Replace multiple spaces with single space
-                  .trim();
-            })
+            .map(
+              (label) =>
+                  label
+                      .replaceAll(
+                        RegExp(
+                          r'\b(food|dish|meal|product|item|object|plant|animal|eating|drinking|serving|cuisine|ingredient|natural|fresh|organic)\b',
+                        ),
+                        '',
+                      )
+                      .replaceAll(RegExp(r'\s*\(.*?\)\s*'), '')
+                      .replaceAll(RegExp(r'\s*,\s*'), ' ')
+                      .replaceAll(RegExp(r'\s+'), ' ')
+                      .trim(),
+            )
             .where((label) => label.isNotEmpty)
             .toList();
 
     if (cleanedLabels.isEmpty) return null;
 
-    // Prioritize labels that contain known food keywords
+    // Find the best match
     for (String keyword in foodKeywords) {
       for (String label in cleanedLabels) {
         if (label.contains(keyword)) {
@@ -194,26 +233,6 @@ class AIRecognitionService {
       }
     }
 
-    // If no specific food keywords found, try to return the most relevant non-generic label
-    // This logic can be further refined based on common non-food items returned by the AI
-    final nonGenericLabels =
-        cleanedLabels.where((label) {
-          return ![
-            'container',
-            'bottle',
-            'packaging',
-            'liquid',
-            'text',
-            'label',
-            'material',
-          ].contains(label);
-        }).toList();
-
-    if (nonGenericLabels.isNotEmpty) {
-      return nonGenericLabels.first;
-    }
-
-    // Fallback to the first cleaned label if no better match is found
     return cleanedLabels.first;
   }
 }
