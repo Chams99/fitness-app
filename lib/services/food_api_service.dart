@@ -4,54 +4,123 @@ import 'package:http/http.dart' as http;
 class FoodApiService {
   static const String baseUrl = 'https://world.openfoodfacts.org/api/v2';
 
-  Future<Map<String, dynamic>?> searchFood(String query) async {
+  Future<List<Map<String, dynamic>>> searchFood(String query) async {
     try {
-      // Clean and format the query
-      final cleanQuery = query.toLowerCase().trim();
-
-      // First try exact match
-      final response = await http.get(
-        Uri.parse(
-          '$baseUrl/search?search_terms=$cleanQuery&search_simple=1&action=process&json=1&page_size=1&sort_by=popularity_key',
-        ),
+      final cleanQuery = query.toLowerCase().trim().replaceAll(
+        RegExp(r's$'),
+        '',
       );
+
+      final uri = Uri.parse(
+        '$baseUrl/search?search_terms=$cleanQuery&search_simple=1&action=process&json=1&page_size=20&sort_by=popularity_key',
+      );
+
+      final response = await http.get(uri);
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['products'] != null && data['products'].isNotEmpty) {
-          final product = data['products'][0];
+          final products =
+              (data['products'] as List<dynamic>)
+                  .cast<Map<String, dynamic>>()
+                  .where(
+                    (p) =>
+                        _hasValidNutritionalInfo(p) && p['image_url'] != null,
+                  )
+                  .toList();
 
-          // Validate the product has required nutritional information
-          if (_hasValidNutritionalInfo(product)) {
-            return _formatProductData(product);
-          }
+          // Score and sort products by relevance
+          final scoredProducts =
+              products.map((product) {
+                final score = _calculateMatchScore(product, cleanQuery);
+                return {'product': product, 'score': score};
+              }).toList();
+
+          // Sort by score (highest first) and return only the products
+          scoredProducts.sort(
+            (a, b) => (b['score'] as double).compareTo(a['score'] as double),
+          );
+
+          return scoredProducts
+              .take(10) // Take top 10 matches
+              .map((item) => item['product'] as Map<String, dynamic>)
+              .toList();
         }
       }
-
-      // If no exact match or invalid data, try fuzzy search
-      final fuzzyResponse = await http.get(
-        Uri.parse(
-          '$baseUrl/search?search_terms=$cleanQuery&search_simple=1&action=process&json=1&page_size=5&sort_by=popularity_key',
-        ),
-      );
-
-      if (fuzzyResponse.statusCode == 200) {
-        final data = json.decode(fuzzyResponse.body);
-        if (data['products'] != null && data['products'].isNotEmpty) {
-          // Find the first product with valid nutritional info
-          for (var product in data['products']) {
-            if (_hasValidNutritionalInfo(product)) {
-              return _formatProductData(product);
-            }
-          }
-        }
-      }
-
-      return null;
+      return [];
     } catch (e) {
       print('Error searching food: $e');
-      return null;
+      return [];
     }
+  }
+
+  double _calculateMatchScore(Map<String, dynamic> product, String query) {
+    final productName = (product['product_name'] ?? '').toLowerCase();
+    final brands = (product['brands'] ?? '').toLowerCase();
+    final categories = (product['categories_tags'] ?? []).cast<String>();
+
+    double score = 0;
+
+    // Exact match gets highest score
+    if (productName == query) {
+      score += 100;
+    }
+    // Product name contains the query
+    else if (productName.contains(query)) {
+      score += 50;
+
+      // Bonus if it's at the beginning
+      if (productName.startsWith(query)) {
+        score += 20;
+      }
+    }
+
+    // Check if query appears in categories
+    for (String category in categories) {
+      if (category.toLowerCase().contains(query)) {
+        score += 30;
+        break;
+      }
+    }
+
+    // Penalize branded products (we prefer generic foods)
+    if (brands.isNotEmpty && brands != 'unknown' && brands != 'none') {
+      score -= 15;
+    } else {
+      score += 10; // Boost score for generic items
+    }
+
+    // Boost if the product name is simple (one or two words)
+    final wordCount = productName.split(' ').length;
+    if (wordCount <= 2) {
+      score += 15;
+    } else if (wordCount <= 4) {
+      score += 5;
+    }
+
+    // Penalize very long product names
+    if (productName.length > query.length + 20) {
+      score -= 10;
+    }
+
+    // Bonus for common food categories
+    final commonFoods = [
+      'fruit',
+      'vegetable',
+      'meat',
+      'fish',
+      'grain',
+      'dairy',
+    ];
+    for (String foodType in commonFoods) {
+      if (productName.contains(foodType) ||
+          categories.any((c) => c.toLowerCase().contains(foodType))) {
+        score += 5;
+        break;
+      }
+    }
+
+    return score;
   }
 
   bool _hasValidNutritionalInfo(Map<String, dynamic> product) {
@@ -65,7 +134,7 @@ class FoodApiService {
             nutriments['fat_100g'] != null);
   }
 
-  Map<String, dynamic> _formatProductData(Map<String, dynamic> product) {
+  Map<String, dynamic> formatProductData(Map<String, dynamic> product) {
     final nutriments = product['nutriments'] ?? {};
 
     return {
@@ -108,7 +177,7 @@ class FoodApiService {
         if (data['product'] != null) {
           final product = data['product'];
           if (_hasValidNutritionalInfo(product)) {
-            return _formatProductData(product);
+            return formatProductData(product);
           }
         }
       }

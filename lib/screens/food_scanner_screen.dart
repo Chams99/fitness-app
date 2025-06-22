@@ -1,10 +1,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
-import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
-import '../services/food_api_service.dart';
-import '../services/ai_recognition_service.dart';
-import '../services/food_recognition_api_service.dart';
+import 'package:image_picker/image_picker.dart';
+import '../services/gemini_food_analyzer_service.dart';
+import 'package:iconsax/iconsax.dart';
 
 class FoodScannerScreen extends StatefulWidget {
   const FoodScannerScreen({super.key});
@@ -16,43 +15,27 @@ class FoodScannerScreen extends StatefulWidget {
 class _FoodScannerScreenState extends State<FoodScannerScreen>
     with WidgetsBindingObserver {
   CameraController? _controller;
-  final FoodApiService _foodApiService = FoodApiService();
-  final AIRecognitionService _aiService = AIRecognitionService();
-  final FoodRecognitionApiService _recognitionService =
-      FoodRecognitionApiService();
   bool _isProcessing = false;
   bool _isInitialized = false;
   String? _errorMessage;
-  Map<String, dynamic>? _foodData;
-  ImageLabeler? _imageLabeler;
   bool _isDisposed = false;
   bool _isFocusing = false;
-  List<String> _recognizedLabels = [];
   bool _isAIAvailable = true;
   DateTime? _lastCaptureTime;
   static const Duration _minCaptureInterval = Duration(seconds: 2);
-  List<dynamic> _rawLabels = [];
-  double _confidence = 0.0;
+  final ImagePicker _picker = ImagePicker();
+  final GeminiFoodAnalyzerService _analyzerService =
+      GeminiFoodAnalyzerService();
+
+  File? _selectedImage;
+  Map<String, dynamic>? _analysisResult;
+  bool _isAnalyzing = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _initializeCamera();
-    _initializeImageLabeler();
-  }
-
-  Future<void> _initializeImageLabeler() async {
-    try {
-      _imageLabeler = ImageLabeler(
-        options: ImageLabelerOptions(confidenceThreshold: 0.7),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _errorMessage = 'Failed to initialize image recognition: $e';
-      });
-    }
   }
 
   @override
@@ -139,7 +122,6 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
   Future<void> _processImage() async {
     if (_controller == null ||
         !_controller!.value.isInitialized ||
-        _imageLabeler == null ||
         _isProcessing ||
         _isFocusing) {
       return;
@@ -154,8 +136,7 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
     setState(() {
       _isProcessing = true;
       _errorMessage = null;
-      _recognizedLabels = [];
-      _foodData = null;
+      _analysisResult = null;
     });
 
     try {
@@ -189,7 +170,7 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
         // Take the picture
         image = await _controller!.takePicture();
         _lastCaptureTime = DateTime.now();
-        print('Image saved at: \\${image.path}');
+        print('Image saved at: ${image.path}');
 
         // Reset focus after capture
         await _controller!.setFocusMode(FocusMode.auto);
@@ -206,42 +187,30 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
 
       if (_isDisposed || image == null) return;
 
-      // Process image using the recognition service
-      final result = await _recognitionService.recognizeFoodFromImage(
-        File(image.path),
-      );
+      // Process image using the new Gemini analyzer service
+      print('Starting Gemini analysis for image: ${image.path}');
+      final result = await _analyzerService.analyzeFoodImage(File(image.path));
+      print('Gemini analysis completed: $result');
 
       if (_isDisposed) return;
 
-      if (!result['success']) {
-        if (mounted) {
-          setState(() {
-            _errorMessage = result['error'];
-            _foodData = null;
-          });
-        }
-        return;
-      }
-
       if (mounted) {
         setState(() {
-          _foodData = result['food_data'];
-          _recognizedLabels = List<String>.from(result['recognized_labels']);
-          _rawLabels = result['raw_labels'] ?? [];
-          _confidence = result['confidence'] ?? 0.0;
+          _analysisResult = result;
+          _isProcessing = false;
         });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           _errorMessage = 'Error processing image: $e';
-          _foodData = null;
+          _analysisResult = null;
+          _isProcessing = false;
         });
       }
     } finally {
       if (mounted) {
         setState(() {
-          _isProcessing = false;
           _isFocusing = false;
         });
       }
@@ -253,7 +222,6 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
     _isDisposed = true;
     WidgetsBinding.instance.removeObserver(this);
     _controller?.dispose();
-    _imageLabeler?.close();
     super.dispose();
   }
 
@@ -296,138 +264,35 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
       body: Column(
         children: [
           Expanded(child: _buildCameraPreview()),
-          if (_foodData != null)
+          if (_isProcessing || _isAnalyzing)
             Container(
               padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: const Row(
                 children: [
-                  if (_confidence < 0.3)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8.0),
-                      child: Row(
-                        children: [
-                          Icon(Icons.warning, color: Colors.orange),
-                          SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'Low confidence: The result may not be accurate.',
-                              style: TextStyle(color: Colors.orange),
-                            ),
-                          ),
-                        ],
-                      ),
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 16),
+                  Text('Analyzing food image...'),
+                ],
+              ),
+            ),
+          if (_analysisResult != null) _buildAnalysisResult(),
+          if (_errorMessage != null)
+            Container(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Icon(Iconsax.warning_2, color: Colors.red),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _errorMessage!,
+                      style: TextStyle(color: Colors.red[700]),
                     ),
-                  Row(
-                    children: [
-                      if (_foodData!['image_url'] != null)
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Image.network(
-                            _foodData!['image_url'],
-                            width: 80,
-                            height: 80,
-                            fit: BoxFit.cover,
-                            errorBuilder:
-                                (context, error, stackTrace) =>
-                                    const SizedBox.shrink(),
-                          ),
-                        ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _foodData!['product_name'] ?? 'Unknown Food',
-                              style: Theme.of(context).textTheme.titleLarge,
-                            ),
-                            if (_foodData!['brands'] != null)
-                              Text(
-                                _foodData!['brands'],
-                                style: Theme.of(context).textTheme.bodyMedium,
-                              ),
-                            if (_foodData!['nutriscore_grade'] != null)
-                              Container(
-                                margin: const EdgeInsets.only(top: 4),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: _getNutriScoreColor(
-                                    _foodData!['nutriscore_grade'],
-                                  ),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  'Nutri-Score: ${_foodData!['nutriscore_grade']}',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ],
                   ),
-                  const SizedBox(height: 12),
-                  if (_rawLabels.isNotEmpty)
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'What the AI sees:',
-                          style: TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                        ..._rawLabels.map(
-                          (r) => Text(
-                            '${r['label']} (score: ${(r['score'] as double).toStringAsFixed(3)})',
-                            style: TextStyle(
-                              color:
-                                  (r['score'] as double) >= 0.3
-                                      ? Colors.black
-                                      : Colors.grey,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                      ],
-                    ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Nutritional Information (per 100g)',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                  ),
-                  const SizedBox(height: 8),
-                  _buildNutrientRow(
-                    'Calories',
-                    '${_foodData!['nutriments']?['energy-kcal_100g']?.toString() ?? 'N/A'} kcal',
-                  ),
-                  _buildNutrientRow(
-                    'Protein',
-                    '${_foodData!['nutriments']?['proteins_100g']?.toString() ?? 'N/A'}g',
-                  ),
-                  _buildNutrientRow(
-                    'Carbs',
-                    '${_foodData!['nutriments']?['carbohydrates_100g']?.toString() ?? 'N/A'}g',
-                  ),
-                  _buildNutrientRow(
-                    'Fat',
-                    '${_foodData!['nutriments']?['fat_100g']?.toString() ?? 'N/A'}g',
-                  ),
-                  if (_foodData!['nutriments']?['fiber_100g'] != null)
-                    _buildNutrientRow(
-                      'Fiber',
-                      '${_foodData!['nutriments']?['fiber_100g']?.toString() ?? 'N/A'}g',
-                    ),
-                  if (_foodData!['nutriments']?['sodium_100g'] != null)
-                    _buildNutrientRow(
-                      'Sodium',
-                      '${_foodData!['nutriments']?['sodium_100g']?.toString() ?? 'N/A'}g',
-                    ),
                 ],
               ),
             ),
@@ -532,20 +397,178 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
     );
   }
 
-  Color _getNutriScoreColor(String? grade) {
-    switch (grade?.toLowerCase()) {
-      case 'a':
-        return Colors.green;
-      case 'b':
-        return Colors.lightGreen;
-      case 'c':
-        return Colors.yellow;
-      case 'd':
-        return Colors.orange;
-      case 'e':
-        return Colors.red;
-      default:
-        return Colors.grey;
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      final XFile? image = await _picker.pickImage(
+        source: source,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 85,
+      );
+
+      if (image != null) {
+        setState(() {
+          _selectedImage = File(image.path);
+          _analysisResult = null;
+          _errorMessage = null;
+        });
+
+        await _analyzeFood();
+      }
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Error picking image: $e';
+      });
     }
+  }
+
+  Future<void> _analyzeFood() async {
+    if (_selectedImage == null) return;
+
+    setState(() {
+      _isAnalyzing = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final result = await _analyzerService.analyzeFoodImage(_selectedImage!);
+
+      setState(() {
+        _analysisResult = result;
+        _isAnalyzing = false;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Error analyzing food: $e';
+        _isAnalyzing = false;
+      });
+    }
+  }
+
+  Widget _buildAnalysisResult() {
+    if (_analysisResult == null) return const SizedBox.shrink();
+
+    final success = _analysisResult!['success'] as bool;
+
+    if (!success) {
+      return Card(
+        margin: const EdgeInsets.all(16),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              Icon(Iconsax.close_circle, color: Colors.red, size: 48),
+              const SizedBox(height: 8),
+              Text(
+                'Analysis Failed',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _analysisResult!['error'] ?? 'Unknown error',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final foodData = _analysisResult!['food_data'] as Map<String, dynamic>;
+    final nutriments = foodData['nutriments'] as Map<String, dynamic>;
+    final confidence = _analysisResult!['confidence'] as double;
+    final recognizedFood = _analysisResult!['recognized_food'] as String?;
+
+    return Card(
+      margin: const EdgeInsets.all(16),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Iconsax.tick_circle, color: Colors.green, size: 24),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    foodData['product_name'] ?? 'Unknown Food',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (recognizedFood != null) ...[
+              Text(
+                'Recognized as: $recognizedFood',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Confidence: ${(confidence * 100).toStringAsFixed(1)}%',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 16),
+            ],
+            Text(
+              'Nutritional Information (per 100g)',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            _buildNutritionRow(
+              'Calories',
+              '${nutriments['energy-kcal_100g']?.toStringAsFixed(1) ?? 'N/A'} kcal',
+            ),
+            _buildNutritionRow(
+              'Protein',
+              '${nutriments['proteins_100g']?.toStringAsFixed(1) ?? 'N/A'}g',
+            ),
+            _buildNutritionRow(
+              'Carbohydrates',
+              '${nutriments['carbohydrates_100g']?.toStringAsFixed(1) ?? 'N/A'}g',
+            ),
+            _buildNutritionRow(
+              'Fat',
+              '${nutriments['fat_100g']?.toStringAsFixed(1) ?? 'N/A'}g',
+            ),
+            _buildNutritionRow(
+              'Fiber',
+              '${nutriments['fiber_100g']?.toStringAsFixed(1) ?? 'N/A'}g',
+            ),
+            if (foodData['brands'] != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                'Brand: ${foodData['brands']}',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNutritionRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: Theme.of(context).textTheme.bodyMedium),
+          Text(
+            value,
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+    );
   }
 }
