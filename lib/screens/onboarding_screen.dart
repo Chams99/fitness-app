@@ -1,9 +1,61 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/user.dart';
+import '../main.dart'; // Import MainScreen
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
+
+  static Future<User?> loadSavedUser() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userJson = prefs.getString('user');
+      if (userJson == null || userJson.isEmpty) return null;
+
+      final data = jsonDecode(userJson) as Map<String, dynamic>;
+
+      // Validate required fields
+      if (!data.containsKey('name') ||
+          !data.containsKey('weight') ||
+          !data.containsKey('height')) {
+        return null;
+      }
+
+      return User(
+        name: data['name'] as String,
+        goal: data['goal'] as String? ?? '10,000 steps daily',
+        dailySteps: (data['dailySteps'] as num?)?.toInt() ?? 0,
+        dailyCalories: (data['dailyCalories'] as num?)?.toInt() ?? 0,
+        dailyWorkoutMinutes:
+            (data['dailyWorkoutMinutes'] as num?)?.toInt() ?? 0,
+        weight: (data['weight'] as num).toDouble(),
+        height: (data['height'] as num).toDouble(),
+      );
+    } catch (e) {
+      return null;
+    }
+  }
+
+  static Future<bool> saveUser(User user) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userMap = {
+        'name': user.name,
+        'goal': user.goal,
+        'dailySteps': user.dailySteps,
+        'dailyCalories': user.dailyCalories,
+        'dailyWorkoutMinutes': user.dailyWorkoutMinutes,
+        'weight': user.weight,
+        'height': user.height,
+      };
+      final result = await prefs.setString('user', jsonEncode(userMap));
+      return result;
+    } catch (e) {
+      return false;
+    }
+  }
 
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -14,6 +66,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   final _nameController = TextEditingController();
   final _weightController = TextEditingController();
   final _heightController = TextEditingController();
+  bool _isLoading = false;
 
   @override
   void dispose() {
@@ -23,10 +76,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     super.dispose();
   }
 
-  void _submitForm() {
+  void _submitForm() async {
     if (_formKey.currentState!.validate()) {
+      setState(() {
+        _isLoading = true;
+      });
+
       final user = User(
-        name: _nameController.text,
+        name: _nameController.text.trim(),
         goal: '10,000 steps daily',
         dailySteps: 0,
         dailyCalories: 0,
@@ -35,40 +92,66 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         height: double.parse(_heightController.text),
       );
 
-      // Show welcome dialog
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder:
-            (context) => AlertDialog(
-              title: const Text('Welcome to FitLite!'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Hi ${user.name}!'),
-                  const SizedBox(height: 16),
-                  const Text('Your fitness journey starts now!'),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Current BMI: ${user.calculateBMI().toStringAsFixed(1)}',
+      final saveSuccess = await OnboardingScreen.saveUser(user);
+
+      setState(() {
+        _isLoading = false;
+      });
+
+      if (saveSuccess) {
+        // Show welcome dialog
+        if (mounted) {
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder:
+                (context) => AlertDialog(
+                  title: const Text('Welcome to FitLite!'),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Hi ${user.name}!'),
+                      const SizedBox(height: 16),
+                      const Text('Your fitness journey starts now!'),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Current BMI: ${user.calculateBMI().toStringAsFixed(1)}',
+                      ),
+                      Text(
+                        'Category: ${User.getBMICategory(user.calculateBMI())}',
+                      ),
+                    ],
                   ),
-                  Text('Category: ${User.getBMICategory(user.calculateBMI())}'),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    Navigator.of(context).pop(); // Close dialog
-                    Navigator.of(
-                      context,
-                    ).pushReplacementNamed('/home', arguments: user);
-                  },
-                  child: const Text('Get Started'),
+                  actions: [
+                    TextButton(
+                      onPressed: () {
+                        Navigator.of(context).pop(); // Close dialog
+                        // Navigate directly to MainScreen instead of using routes
+                        Navigator.of(context).pushAndRemoveUntil(
+                          MaterialPageRoute(
+                            builder: (context) => MainScreen(user: user),
+                          ),
+                          (route) => false,
+                        );
+                      },
+                      child: const Text('Get Started'),
+                    ),
+                  ],
                 ),
-              ],
+          );
+        }
+      } else {
+        // Show error message
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Failed to save user data. Please try again.'),
+              backgroundColor: Colors.red,
             ),
-      );
+          );
+        }
+      }
     }
   }
 
@@ -165,16 +248,29 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ),
                 const SizedBox(height: 40),
                 ElevatedButton(
-                  onPressed: _submitForm,
+                  onPressed: _isLoading ? null : _submitForm,
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     backgroundColor: Colors.blue,
                     foregroundColor: Colors.white,
+                    disabledBackgroundColor: Colors.grey,
                   ),
-                  child: const Text(
-                    'Start Your Journey',
-                    style: TextStyle(fontSize: 16),
-                  ),
+                  child:
+                      _isLoading
+                          ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Colors.white,
+                              ),
+                            ),
+                          )
+                          : const Text(
+                            'Start Your Journey',
+                            style: TextStyle(fontSize: 16),
+                          ),
                 ),
               ],
             ),

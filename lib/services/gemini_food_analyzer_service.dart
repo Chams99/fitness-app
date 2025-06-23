@@ -51,24 +51,57 @@ class GeminiFoodAnalyzerService {
         };
       }
 
-      final productCandidates = await _foodApiService.searchFood(
-        recognizedFood,
-      );
+      // Try to find food data using multiple approaches
+      List<Map<String, dynamic>> productCandidates = [];
+
+      // First, try the primary recognized food
+      productCandidates = await _foodApiService.searchFood(recognizedFood);
+
+      // If no results found, try the possible alternatives
+      if (productCandidates.isEmpty && possibleFoods.isNotEmpty) {
+        for (String alternative in possibleFoods) {
+          productCandidates = await _foodApiService.searchFood(alternative);
+          if (productCandidates.isNotEmpty) {
+            break;
+          }
+        }
+      }
+
+      // If still no results, try with simplified terms
+      if (productCandidates.isEmpty) {
+        final simplifiedTerms = _generateSimplifiedSearchTerms(recognizedFood);
+        for (String term in simplifiedTerms) {
+          productCandidates = await _foodApiService.searchFood(term);
+          if (productCandidates.isNotEmpty) {
+            break;
+          }
+        }
+      }
 
       if (productCandidates.isEmpty) {
+        // Get API status to provide better error information
+        final apiStatus = await _foodApiService.getApiStatus();
+        final availableApis =
+            apiStatus.entries
+                .where((entry) => entry.value)
+                .map((entry) => entry.key)
+                .toList();
+
         return {
           'success': false,
           'error':
-              'Could not find any matching food in the database for "$recognizedFood".',
+              availableApis.isEmpty
+                  ? 'All food databases are currently unavailable. Please try again later.'
+                  : 'Could not find "$recognizedFood" in any of the available food databases (${availableApis.join(', ')}). Try taking a clearer photo or searching manually.',
           'recognized_food': recognizedFood,
+          'possible_foods': possibleFoods,
           'confidence': confidence,
+          'available_databases': availableApis,
         };
       }
 
-      // For now, just use the first candidate as the best match
-      // We can implement proper image matching later
+      // Use the best match (first result is already the highest scored)
       final bestMatch = productCandidates.first;
-
       final foodData = _foodApiService.formatProductData(bestMatch);
 
       final result = {
@@ -78,6 +111,8 @@ class GeminiFoodAnalyzerService {
         'best_match': foodData['product_name'],
         'possible_foods': possibleFoods,
         'confidence': confidence,
+        'search_source': bestMatch['source'] ?? 'Unknown',
+        'alternatives_found': productCandidates.length,
         'timestamp': DateTime.now(),
       };
 
@@ -92,6 +127,48 @@ class GeminiFoodAnalyzerService {
         'confidence': 0.0,
       };
     }
+  }
+
+  List<String> _generateSimplifiedSearchTerms(String originalTerm) {
+    final terms = <String>[];
+    final lowercaseTerm = originalTerm.toLowerCase();
+
+    // Remove common descriptive words
+    final descriptiveWords = [
+      'fresh',
+      'organic',
+      'raw',
+      'cooked',
+      'grilled',
+      'fried',
+      'baked',
+      'steamed',
+    ];
+    String simplified = lowercaseTerm;
+    for (String word in descriptiveWords) {
+      simplified = simplified.replaceAll(word, '').trim();
+    }
+
+    if (simplified != lowercaseTerm && simplified.isNotEmpty) {
+      terms.add(simplified);
+    }
+
+    // Try individual words if it's a compound term
+    final words = lowercaseTerm.split(' ');
+    if (words.length > 1) {
+      for (String word in words) {
+        if (word.length > 2 && !descriptiveWords.contains(word)) {
+          terms.add(word);
+        }
+      }
+    }
+
+    // Try removing 's' from the end
+    if (lowercaseTerm.endsWith('s') && lowercaseTerm.length > 3) {
+      terms.add(lowercaseTerm.substring(0, lowercaseTerm.length - 1));
+    }
+
+    return terms.take(3).toList(); // Limit to 3 alternative terms
   }
 
   Future<String> _generateCacheKey(File imageFile) async {

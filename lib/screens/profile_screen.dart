@@ -2,10 +2,36 @@ import 'package:flutter/material.dart';
 import '../models/user.dart';
 import 'edit_measurements_screen.dart';
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   final User user;
-
   const ProfileScreen({super.key, required this.user});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  late User _user;
+
+  @override
+  void initState() {
+    super.initState();
+    _user = widget.user;
+  }
+
+  Future<void> _editMeasurements() async {
+    final updatedUser = await Navigator.push<User>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => EditMeasurementsScreen(user: _user),
+      ),
+    );
+    if (updatedUser != null) {
+      setState(() {
+        _user = updatedUser;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -26,7 +52,7 @@ class ProfileScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    user.name,
+                    _user.name,
                     style: Theme.of(context).textTheme.headlineSmall,
                   ),
                 ],
@@ -43,15 +69,7 @@ class ProfileScreen extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
                 TextButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder:
-                            (context) => EditMeasurementsScreen(user: user),
-                      ),
-                    );
-                  },
+                  onPressed: _editMeasurements,
                   icon: const Icon(Icons.edit),
                   label: const Text('Edit'),
                 ),
@@ -66,15 +84,15 @@ class ProfileScreen extends StatelessWidget {
                     _buildMeasurementItem(
                       context,
                       'BMI',
-                      '${user.calculateBMI().toStringAsFixed(1)}',
-                      User.getBMICategory(user.calculateBMI()),
+                      _user.calculateBMI().toStringAsFixed(1),
+                      User.getBMICategory(_user.calculateBMI()),
                       Icons.monitor_weight,
                     ),
                     const Divider(),
                     _buildMeasurementItem(
                       context,
                       'Weight',
-                      '${user.weight.toStringAsFixed(1)} kg',
+                      '${_user.weight.toStringAsFixed(1)} kg',
                       'Current',
                       Icons.scale,
                     ),
@@ -82,7 +100,7 @@ class ProfileScreen extends StatelessWidget {
                     _buildMeasurementItem(
                       context,
                       'Height',
-                      '${user.height.toStringAsFixed(1)} cm',
+                      '${_user.height.toStringAsFixed(1)} cm',
                       'Current',
                       Icons.height,
                     ),
@@ -108,21 +126,21 @@ class ProfileScreen extends StatelessWidget {
                     _buildGoalItem(
                       context,
                       'Daily Steps',
-                      '${user.dailySteps} / 10,000',
+                      '${_user.dailySteps} / 10,000',
                       Icons.directions_walk,
                     ),
                     const Divider(),
                     _buildGoalItem(
                       context,
                       'Daily Calories',
-                      '${user.dailyCalories} / 500',
+                      '${_user.dailyCalories} / 500',
                       Icons.local_fire_department,
                     ),
                     const Divider(),
                     _buildGoalItem(
                       context,
                       'Workout Minutes',
-                      '${user.dailyWorkoutMinutes} / 60',
+                      '${_user.dailyWorkoutMinutes} / 60',
                       Icons.fitness_center,
                     ),
                   ],

@@ -110,14 +110,22 @@ class _EditMeasurementsScreenState extends State<EditMeasurementsScreen> {
   }
 
   void _saveMeasurements() {
-    // TODO: Implement saving measurements
-    // For now, just show a success message and pop
+    // Return updated user to previous screen
+    final updatedUser = User(
+      name: widget.user.name,
+      goal: widget.user.goal,
+      dailySteps: widget.user.dailySteps,
+      dailyCalories: widget.user.dailyCalories,
+      dailyWorkoutMinutes: widget.user.dailyWorkoutMinutes,
+      weight: double.tryParse(_weightController.text) ?? widget.user.weight,
+      height: double.tryParse(_heightController.text) ?? widget.user.height,
+    );
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Measurements saved successfully!'),
         backgroundColor: Colors.green,
       ),
     );
-    Navigator.pop(context);
+    Navigator.pop(context, updatedUser);
   }
 }
