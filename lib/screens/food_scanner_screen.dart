@@ -189,6 +189,13 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
 
       // Process image using the new Gemini analyzer service
       print('Starting Gemini analysis for image: ${image.path}');
+
+      if (mounted) {
+        setState(() {
+          _errorMessage = null; // Clear any previous errors
+        });
+      }
+
       final result = await _analyzerService.analyzeFoodImage(File(image.path));
       print('Gemini analysis completed: $result');
 
@@ -198,6 +205,36 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
         setState(() {
           _analysisResult = result;
           _isProcessing = false;
+
+          // Show user-friendly error messages
+          if (!result['success']) {
+            final String error = result['error'] ?? 'Unknown error occurred';
+            final int attempts = result['attempts'] ?? 1;
+
+            if (error.contains('TimeoutException') ||
+                error.contains('timeout')) {
+              _errorMessage =
+                  'Analysis timed out after $attempts attempt${attempts > 1 ? 's' : ''}. Please check your internet connection and try again.';
+
+              // Run diagnostic test to help identify the issue
+              _runDiagnosticTest();
+            } else if (error.contains('Rate limit') || error.contains('429')) {
+              _errorMessage =
+                  'Service is busy. Please wait a moment and try again.';
+            } else if (error.contains('API key')) {
+              _errorMessage = 'Configuration error. Please contact support.';
+            } else if (error.contains('Could not recognize')) {
+              _errorMessage =
+                  'Could not identify the food item. Try taking a clearer photo or ensuring good lighting.';
+            } else {
+              _errorMessage =
+                  attempts > 1
+                      ? 'Failed after $attempts attempts: ${error.length > 100 ? '${error.substring(0, 100)}...' : error}'
+                      : error.length > 100
+                      ? '${error.substring(0, 100)}...'
+                      : error;
+            }
+          }
         });
       }
     } catch (e) {
@@ -267,15 +304,26 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
           if (_isProcessing || _isAnalyzing)
             Container(
               padding: const EdgeInsets.all(16),
-              child: const Row(
+              child: Column(
                 children: [
-                  SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                  const Row(
+                    children: [
+                      SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      SizedBox(width: 16),
+                      Text('Analyzing food image...'),
+                    ],
                   ),
-                  SizedBox(width: 16),
-                  Text('Analyzing food image...'),
+                  const SizedBox(height: 8),
+                  Text(
+                    'This may take up to 30 seconds',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+                  ),
                 ],
               ),
             ),
@@ -381,6 +429,23 @@ class _FoodScannerScreenState extends State<FoodScannerScreen>
       setState(() {
         _isFocusing = false;
       });
+    }
+  }
+
+  Future<void> _runDiagnosticTest() async {
+    print('Running diagnostic test due to timeout...');
+    try {
+      final testResult = await _analyzerService.testGeminiConnection();
+      print('Diagnostic test result: $testResult');
+
+      if (!testResult['success']) {
+        print('Diagnostic Issue Found: ${testResult['error']}');
+        if (testResult['suggestions'] != null) {
+          print('Suggestions: ${testResult['suggestions']}');
+        }
+      }
+    } catch (e) {
+      print('Error running diagnostic test: $e');
     }
   }
 

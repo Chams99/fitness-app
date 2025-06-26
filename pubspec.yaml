@@ -45,6 +45,7 @@ dependencies:
   font_awesome_flutter: ^10.8.0
   image_picker: ^1.1.2
   image_hash: ^1.0.9
+  image: ^4.1.7
   shared_preferences: ^2.2.2
 
 

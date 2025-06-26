@@ -115,7 +115,7 @@ class _MainScreenState extends State<MainScreen> {
     super.initState();
     _screens = [
       HomeScreen(user: widget.user),
-      WorkoutsScreen(),
+      const WorkoutsScreen(),
       const FoodScannerScreen(),
       ProfileScreen(user: widget.user),
     ];
