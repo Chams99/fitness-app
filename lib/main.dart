@@ -7,6 +7,8 @@ import 'screens/onboarding_screen.dart';
 import 'screens/food_scanner_screen.dart';
 import 'models/user.dart';
 import 'theme/app_theme.dart';
+import 'services/theme_service.dart';
+import 'services/units_service.dart';
 import 'package:iconsax/iconsax.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
@@ -14,6 +16,8 @@ import 'dart:convert';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: ".env");
+  await ThemeService().init();
+  await UnitsService().init();
   runApp(const MyApp());
 }
 
@@ -70,28 +74,36 @@ class _MyAppState extends State<MyApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'FitLite',
-      theme: AppTheme.lightTheme,
-      darkTheme: AppTheme.darkTheme,
-      home:
-          _isLoading
-              ? const Scaffold(body: Center(child: CircularProgressIndicator()))
-              : _savedUser != null
-              ? MainScreen(user: _savedUser!)
-              : const OnboardingScreen(),
-      routes: {
-        '/onboarding': (context) => const OnboardingScreen(),
-        '/home': (context) {
-          final args = ModalRoute.of(context)?.settings.arguments;
-          if (args is User) {
-            return MainScreen(user: args);
-          } else if (_savedUser != null) {
-            return MainScreen(user: _savedUser!);
-          } else {
-            return const OnboardingScreen();
-          }
-        },
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: ThemeService().themeMode,
+      builder: (context, themeMode, child) {
+        return MaterialApp(
+          title: 'FitLite',
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: themeMode,
+          home:
+              _isLoading
+                  ? const Scaffold(
+                    body: Center(child: CircularProgressIndicator()),
+                  )
+                  : _savedUser != null
+                  ? MainScreen(user: _savedUser!)
+                  : const OnboardingScreen(),
+          routes: {
+            '/onboarding': (context) => const OnboardingScreen(),
+            '/home': (context) {
+              final args = ModalRoute.of(context)?.settings.arguments;
+              if (args is User) {
+                return MainScreen(user: args);
+              } else if (_savedUser != null) {
+                return MainScreen(user: _savedUser!);
+              } else {
+                return const OnboardingScreen();
+              }
+            },
+          },
+        );
       },
     );
   }

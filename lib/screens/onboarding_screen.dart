@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/user.dart';
 import '../main.dart'; // Import MainScreen
+import '../services/units_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 
@@ -66,6 +67,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   final _nameController = TextEditingController();
   final _weightController = TextEditingController();
   final _heightController = TextEditingController();
+  final _feetController = TextEditingController();
+  final _inchesController = TextEditingController();
   bool _isLoading = false;
 
   @override
@@ -73,6 +76,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     _nameController.dispose();
     _weightController.dispose();
     _heightController.dispose();
+    _feetController.dispose();
+    _inchesController.dispose();
     super.dispose();
   }
 
@@ -82,14 +87,32 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         _isLoading = true;
       });
 
+      final unitsService = UnitsService();
+
+      // Parse weight and height with unit conversions
+      final weightInKg = unitsService.parseWeightInput(_weightController.text);
+      double heightInCm;
+
+      if (unitsService.isMetric) {
+        heightInCm = double.parse(_heightController.text);
+      } else {
+        final feet = int.parse(_feetController.text);
+        final inches = int.parse(_inchesController.text);
+        heightInCm = unitsService.parseHeightInput(
+          '',
+          feet: feet,
+          inches: inches,
+        );
+      }
+
       final user = User(
         name: _nameController.text.trim(),
         goal: '10,000 steps daily',
         dailySteps: 0,
         dailyCalories: 0,
         dailyWorkoutMinutes: 0,
-        weight: double.parse(_weightController.text),
-        height: double.parse(_heightController.text),
+        weight: weightInKg,
+        height: heightInCm,
       );
 
       final saveSuccess = await OnboardingScreen.saveUser(user);
@@ -155,6 +178,63 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
   }
 
+  Widget _buildImperialHeightFields() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Height', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: TextFormField(
+                controller: _feetController,
+                decoration: const InputDecoration(
+                  labelText: 'Feet',
+                  border: OutlineInputBorder(),
+                  suffixText: 'ft',
+                ),
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                validator: (value) {
+                  final feet = int.tryParse(value ?? '0') ?? 0;
+                  final inches = int.tryParse(_inchesController.text) ?? 0;
+                  return UnitsService().getHeightValidationMessage(
+                    '',
+                    feet: feet,
+                    inches: inches,
+                  );
+                },
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: TextFormField(
+                controller: _inchesController,
+                decoration: const InputDecoration(
+                  labelText: 'Inches',
+                  border: OutlineInputBorder(),
+                  suffixText: 'in',
+                ),
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                validator: (value) {
+                  final feet = int.tryParse(_feetController.text) ?? 0;
+                  final inches = int.tryParse(value ?? '0') ?? 0;
+                  return UnitsService().getHeightValidationMessage(
+                    '',
+                    feet: feet,
+                    inches: inches,
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -201,49 +281,52 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   },
                 ),
                 const SizedBox(height: 16),
-                TextFormField(
-                  controller: _weightController,
-                  decoration: const InputDecoration(
-                    labelText: 'Weight (kg)',
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.monitor_weight),
-                  ),
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
-                  ],
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Please enter your weight';
-                    }
-                    final weight = double.tryParse(value);
-                    if (weight == null || weight <= 0 || weight > 300) {
-                      return 'Please enter a valid weight';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _heightController,
-                  decoration: const InputDecoration(
-                    labelText: 'Height (cm)',
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.height),
-                  ),
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
-                  ],
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Please enter your height';
-                    }
-                    final height = double.tryParse(value);
-                    if (height == null || height <= 0 || height > 300) {
-                      return 'Please enter a valid height';
-                    }
-                    return null;
+                ValueListenableBuilder<UnitSystem>(
+                  valueListenable: UnitsService().unitSystem,
+                  builder: (context, unitSystem, child) {
+                    return Column(
+                      children: [
+                        TextFormField(
+                          controller: _weightController,
+                          decoration: InputDecoration(
+                            labelText: UnitsService().weightLabel,
+                            border: const OutlineInputBorder(),
+                            prefixIcon: const Icon(Icons.monitor_weight),
+                          ),
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.allow(
+                              RegExp(r'^\d*\.?\d*'),
+                            ),
+                          ],
+                          validator:
+                              (value) => UnitsService()
+                                  .getWeightValidationMessage(value ?? ''),
+                        ),
+                        const SizedBox(height: 16),
+                        if (UnitsService().isMetric) ...[
+                          TextFormField(
+                            controller: _heightController,
+                            decoration: InputDecoration(
+                              labelText: UnitsService().heightLabel,
+                              border: const OutlineInputBorder(),
+                              prefixIcon: const Icon(Icons.height),
+                            ),
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.allow(
+                                RegExp(r'^\d*\.?\d*'),
+                              ),
+                            ],
+                            validator:
+                                (value) => UnitsService()
+                                    .getHeightValidationMessage(value ?? ''),
+                          ),
+                        ] else ...[
+                          _buildImperialHeightFields(),
+                        ],
+                      ],
+                    );
                   },
                 ),
                 const SizedBox(height: 40),

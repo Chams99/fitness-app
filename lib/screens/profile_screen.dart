@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import '../models/user.dart';
+import '../services/units_service.dart';
 import 'edit_measurements_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 
 class ProfileScreen extends StatefulWidget {
   final User user;
@@ -10,13 +13,65 @@ class ProfileScreen extends StatefulWidget {
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
+class _ProfileScreenState extends State<ProfileScreen>
+    with WidgetsBindingObserver {
   late User _user;
 
   @override
   void initState() {
     super.initState();
     _user = widget.user;
+    WidgetsBinding.instance.addObserver(this);
+    _loadUserFromPreferences(); // Load latest user data
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadUserFromPreferences(); // Reload when app resumes
+    }
+  }
+
+  Future<void> _loadUserFromPreferences() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userJson = prefs.getString('user');
+
+      if (userJson != null && userJson.isNotEmpty) {
+        final data = jsonDecode(userJson) as Map<String, dynamic>;
+
+        if (data.containsKey('name') &&
+            data.containsKey('weight') &&
+            data.containsKey('height')) {
+          final loadedUser = User(
+            name: data['name'] as String,
+            goal: data['goal'] as String? ?? '10,000 steps daily',
+            dailySteps: (data['dailySteps'] as num?)?.toInt() ?? 0,
+            dailyCalories: (data['dailyCalories'] as num?)?.toInt() ?? 0,
+            dailyWorkoutMinutes:
+                (data['dailyWorkoutMinutes'] as num?)?.toInt() ?? 0,
+            weight: (data['weight'] as num).toDouble(),
+            height: (data['height'] as num).toDouble(),
+          );
+
+          print(
+            'DEBUG: ProfileScreen loaded user from preferences - Weight: ${loadedUser.weight}kg, Height: ${loadedUser.height}cm',
+          );
+
+          setState(() {
+            _user = loadedUser;
+          });
+        }
+      }
+    } catch (e) {
+      print('DEBUG: Error loading user from preferences: $e');
+    }
   }
 
   Future<void> _editMeasurements() async {
@@ -30,7 +85,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
       setState(() {
         _user = updatedUser;
       });
+      print(
+        'DEBUG: ProfileScreen updated with returned user - Weight: ${updatedUser.weight}kg, Height: ${updatedUser.height}cm',
+      );
     }
+
+    // Also reload from preferences to ensure we have the latest data
+    await _loadUserFromPreferences();
   }
 
   @override
@@ -76,37 +137,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ],
             ),
             const SizedBox(height: 16),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  children: [
-                    _buildMeasurementItem(
-                      context,
-                      'BMI',
-                      _user.calculateBMI().toStringAsFixed(1),
-                      User.getBMICategory(_user.calculateBMI()),
-                      Icons.monitor_weight,
+            ValueListenableBuilder<UnitSystem>(
+              valueListenable: UnitsService().unitSystem,
+              builder: (context, unitSystem, child) {
+                return Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      children: [
+                        _buildMeasurementItem(
+                          context,
+                          'BMI',
+                          _user.calculateBMI().toStringAsFixed(1),
+                          User.getBMICategory(_user.calculateBMI()),
+                          Icons.monitor_weight,
+                        ),
+                        const Divider(),
+                        _buildMeasurementItem(
+                          context,
+                          'Weight',
+                          UnitsService().formatWeight(_user.weight),
+                          'Current',
+                          Icons.scale,
+                        ),
+                        const Divider(),
+                        _buildMeasurementItem(
+                          context,
+                          'Height',
+                          UnitsService().formatHeight(_user.height),
+                          'Current',
+                          Icons.height,
+                        ),
+                      ],
                     ),
-                    const Divider(),
-                    _buildMeasurementItem(
-                      context,
-                      'Weight',
-                      '${_user.weight.toStringAsFixed(1)} kg',
-                      'Current',
-                      Icons.scale,
-                    ),
-                    const Divider(),
-                    _buildMeasurementItem(
-                      context,
-                      'Height',
-                      '${_user.height.toStringAsFixed(1)} cm',
-                      'Current',
-                      Icons.height,
-                    ),
-                  ],
-                ),
-              ),
+                  ),
+                );
+              },
             ),
             const SizedBox(height: 16),
             const SizedBox(height: 32),

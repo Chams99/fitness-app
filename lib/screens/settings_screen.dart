@@ -1,4 +1,6 @@
 import 'package:fitness_app/models/user.dart';
+import 'package:fitness_app/services/theme_service.dart';
+import 'package:fitness_app/services/units_service.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -11,9 +13,7 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  bool _isDarkMode = false;
   bool _notificationsEnabled = true;
-  String _units = 'Metric';
 
   @override
   void initState() {
@@ -24,35 +24,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      _isDarkMode = prefs.getBool('darkMode') ?? false;
       _notificationsEnabled = prefs.getBool('notifications') ?? true;
-      _units = prefs.getString('units') ?? 'Metric';
     });
-  }
-
-  Future<void> _setDarkMode(bool value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('darkMode', value);
-    setState(() {
-      _isDarkMode = value;
-    });
-    // Show dialog to inform user to restart app for theme changes
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('Restart Required'),
-            content: const Text(
-              'Please restart the app to apply the theme change.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('OK'),
-              ),
-            ],
-          ),
-    );
   }
 
   Future<void> _setNotifications(bool value) async {
@@ -63,47 +36,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
-  Future<void> _setUnits(String value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('units', value);
-    setState(() {
-      _units = value;
-    });
-  }
-
   void _showUnitsDialog() {
     showDialog(
       context: context,
       builder:
-          (context) => AlertDialog(
-            title: const Text('Select Units'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                RadioListTile<String>(
-                  title: const Text('Metric'),
-                  value: 'Metric',
-                  groupValue: _units,
-                  onChanged: (value) {
-                    if (value != null) {
-                      _setUnits(value);
-                      Navigator.pop(context);
-                    }
-                  },
+          (context) => ValueListenableBuilder<UnitSystem>(
+            valueListenable: UnitsService().unitSystem,
+            builder: (context, unitSystem, child) {
+              return AlertDialog(
+                title: const Text('Select Units'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    RadioListTile<UnitSystem>(
+                      title: const Text('Metric'),
+                      value: UnitSystem.metric,
+                      groupValue: unitSystem,
+                      onChanged: (value) {
+                        if (value != null) {
+                          UnitsService().setUnitSystem(value);
+                          Navigator.pop(context);
+                        }
+                      },
+                    ),
+                    RadioListTile<UnitSystem>(
+                      title: const Text('Imperial'),
+                      value: UnitSystem.imperial,
+                      groupValue: unitSystem,
+                      onChanged: (value) {
+                        if (value != null) {
+                          UnitsService().setUnitSystem(value);
+                          Navigator.pop(context);
+                        }
+                      },
+                    ),
+                  ],
                 ),
-                RadioListTile<String>(
-                  title: const Text('Imperial'),
-                  value: 'Imperial',
-                  groupValue: _units,
-                  onChanged: (value) {
-                    if (value != null) {
-                      _setUnits(value);
-                      Navigator.pop(context);
-                    }
-                  },
-                ),
-              ],
-            ),
+              );
+            },
           ),
     );
   }
@@ -132,15 +102,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         children: [
           // Theme Settings
-          ListTile(
-            leading: const Icon(Icons.palette),
-            title: const Text('Dark Mode'),
-            trailing: Switch(
-              value: _isDarkMode,
-              onChanged: (bool value) {
-                _setDarkMode(value);
-              },
-            ),
+          ValueListenableBuilder<ThemeMode>(
+            valueListenable: ThemeService().themeMode,
+            builder: (context, themeMode, child) {
+              return ListTile(
+                leading: const Icon(Icons.palette),
+                title: const Text('Dark Mode'),
+                trailing: Switch(
+                  value: themeMode == ThemeMode.dark,
+                  onChanged: (bool value) {
+                    ThemeService().setThemeMode(
+                      value ? ThemeMode.dark : ThemeMode.light,
+                    );
+                  },
+                ),
+              );
+            },
           ),
           const Divider(),
 
@@ -158,11 +135,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const Divider(),
 
           // Units Settings
-          ListTile(
-            leading: const Icon(Icons.straighten),
-            title: const Text('Units'),
-            subtitle: Text(_units),
-            onTap: _showUnitsDialog,
+          ValueListenableBuilder<UnitSystem>(
+            valueListenable: UnitsService().unitSystem,
+            builder: (context, unitSystem, child) {
+              return ListTile(
+                leading: const Icon(Icons.straighten),
+                title: const Text('Units'),
+                subtitle: Text(
+                  unitSystem == UnitSystem.metric ? 'Metric' : 'Imperial',
+                ),
+                onTap: _showUnitsDialog,
+              );
+            },
           ),
           const Divider(),
 
