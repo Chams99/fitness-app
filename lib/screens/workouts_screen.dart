@@ -27,6 +27,7 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
 
   Future<void> _loadData() async {
     try {
+      if (!mounted) return;
       setState(() {
         isLoading = true;
       });
@@ -37,6 +38,8 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
         ExerciseApiService.getMuscleGroups(),
         ExerciseApiService.getEquipmentTypes(),
       ]);
+
+      if (!mounted) return;
 
       exercises = results[0] as List<Exercise>;
       bodyParts = results[1] as List<String>;
@@ -55,14 +58,15 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
             backgroundColor: Colors.red,
           ),
         );
+        setState(() {
+          isLoading = false;
+        });
       }
-      setState(() {
-        isLoading = false;
-      });
     }
   }
 
   void _applyFilters() {
+    if (!mounted) return;
     setState(() {
       filteredExercises =
           exercises.where((exercise) {
@@ -119,6 +123,7 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
   }
 
   void _clearFilters() {
+    if (!mounted) return;
     setState(() {
       selectedBodyPart = null;
       selectedEquipment = null;
@@ -134,6 +139,7 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
     }
 
     try {
+      if (!mounted) return;
       setState(() {
         isLoading = true;
       });
@@ -142,16 +148,17 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
         searchQuery,
       );
 
+      if (!mounted) return;
       setState(() {
         exercises = searchResults;
         filteredExercises = searchResults;
         isLoading = false;
       });
     } catch (e) {
-      setState(() {
-        isLoading = false;
-      });
       if (mounted) {
+        setState(() {
+          isLoading = false;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error searching exercises: $e'),
@@ -226,6 +233,7 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
                               child: Chip(
                                 label: Text('Body: $selectedBodyPart'),
                                 onDeleted: () {
+                                  if (!mounted) return;
                                   setState(() {
                                     selectedBodyPart = null;
                                   });
@@ -237,6 +245,7 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
                             Chip(
                               label: Text('Equipment: $selectedEquipment'),
                               onDeleted: () {
+                                if (!mounted) return;
                                 setState(() {
                                   selectedEquipment = null;
                                 });

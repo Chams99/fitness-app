@@ -41,6 +41,10 @@ class UnitsService {
   double cmToInches(double cm) => cm / 2.54;
   double inchesToCm(double inches) => inches * 2.54;
 
+  // Distance conversions (km <-> miles)
+  double kmToMiles(double km) => km * 0.621371;
+  double milesToKm(double miles) => miles / 0.621371;
+
   // Convert height in cm to feet and inches
   Map<String, int> cmToFeetInches(double cm) {
     final totalInches = cmToInches(cm);
@@ -74,11 +78,23 @@ class UnitsService {
     }
   }
 
+  // Display distance based on current unit system
+  String formatDistance(double distanceInKm) {
+    if (isMetric) {
+      return '${distanceInKm.toStringAsFixed(1)} km';
+    } else {
+      return '${kmToMiles(distanceInKm).toStringAsFixed(1)} mi';
+    }
+  }
+
   // Get weight unit label
   String get weightLabel => isMetric ? 'Weight (kg)' : 'Weight (lbs)';
 
   // Get height unit label
   String get heightLabel => isMetric ? 'Height (cm)' : 'Height (ft/in)';
+
+  // Get distance unit label
+  String get distanceLabel => isMetric ? 'km' : 'mi';
 
   // Convert weight from display units to kg (storage format)
   double weightToKg(double displayWeight) {
@@ -88,6 +104,16 @@ class UnitsService {
   // Convert weight from kg (storage format) to display units
   double weightFromKg(double kgWeight) {
     return isMetric ? kgWeight : kgToLbs(kgWeight);
+  }
+
+  // Convert distance from display units to km (storage format)
+  double distanceToKm(double displayDistance) {
+    return isMetric ? displayDistance : milesToKm(displayDistance);
+  }
+
+  // Convert distance from km (storage format) to display units
+  double distanceFromKm(double kmDistance) {
+    return isMetric ? kmDistance : kmToMiles(kmDistance);
   }
 
   // Convert height from display units to cm (storage format)

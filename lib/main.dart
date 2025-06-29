@@ -5,10 +5,14 @@ import 'screens/workouts_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/food_scanner_screen.dart';
+
+import 'screens/ai_recommendations_screen.dart';
 import 'models/user.dart';
 import 'theme/app_theme.dart';
 import 'services/theme_service.dart';
 import 'services/units_service.dart';
+import 'services/step_counter_service.dart';
+import 'services/ai_fitness_advisor_service.dart';
 import 'package:iconsax/iconsax.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
@@ -18,6 +22,8 @@ void main() async {
   await dotenv.load(fileName: ".env");
   await ThemeService().init();
   await UnitsService().init();
+  await StepCounterService().init();
+  await AIFitnessAdvisorService().init();
   runApp(const MyApp());
 }
 
@@ -92,6 +98,8 @@ class _MyAppState extends State<MyApp> {
                   : const OnboardingScreen(),
           routes: {
             '/onboarding': (context) => const OnboardingScreen(),
+
+            '/ai-recommendations': (context) => const AIRecommendationsScreen(),
             '/home': (context) {
               final args = ModalRoute.of(context)?.settings.arguments;
               if (args is User) {
@@ -125,6 +133,9 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
+    // Set user in step counter service for calorie calculations
+    StepCounterService().setUser(widget.user);
+
     _screens = [
       HomeScreen(user: widget.user),
       const WorkoutsScreen(),

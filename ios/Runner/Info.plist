@@ -47,5 +47,11 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>This app needs camera access to scan food items and identify their nutritional information</string>
+	<key>NSMotionUsageDescription</key>
+	<string>This app needs motion sensor access to count your daily steps and track your fitness activity</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>This app needs access to update your health data with step count information</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>This app needs access to read your health data to provide comprehensive fitness tracking</string>
 </dict>
 </plist>

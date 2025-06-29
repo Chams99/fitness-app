@@ -1,6 +1,7 @@
 import 'package:fitness_app/models/user.dart';
 import 'package:fitness_app/services/theme_service.dart';
 import 'package:fitness_app/services/units_service.dart';
+import 'package:fitness_app/services/step_counter_service.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -13,27 +14,60 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  bool _notificationsEnabled = true;
+  final StepCounterService _stepService = StepCounterService();
 
   @override
   void initState() {
     super.initState();
-    _loadSettings();
+    _stepService.addListener(_onStepServiceUpdate);
   }
 
-  Future<void> _loadSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _notificationsEnabled = prefs.getBool('notifications') ?? true;
-    });
+  @override
+  void dispose() {
+    _stepService.removeListener(_onStepServiceUpdate);
+    super.dispose();
+  }
+
+  void _onStepServiceUpdate() {
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _setNotifications(bool value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('notifications', value);
-    setState(() {
-      _notificationsEnabled = value;
-    });
+    if (value && !_stepService.notificationPermission) {
+      // Request permission if not granted
+      final granted = await _stepService.requestNotificationPermission();
+      if (!granted) {
+        // Show dialog to explain why permission is needed
+        if (mounted) {
+          _showPermissionDialog();
+        }
+        return;
+      }
+    }
+
+    await _stepService.toggleNotifications(value);
+  }
+
+  void _showPermissionDialog() {
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Permission Required'),
+            content: const Text(
+              'Notification permission is required to show step count updates in the notification bar. '
+              'Please enable notifications in your device settings.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+    );
   }
 
   void _showUnitsDialog() {
@@ -124,9 +158,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // Notifications Settings
           ListTile(
             leading: const Icon(Icons.notifications),
-            title: const Text('Notifications'),
+            title: const Text('Step Notifications'),
+            subtitle:
+                _stepService.notificationPermission
+                    ? const Text(
+                      'Show persistent step counter in notification bar',
+                    )
+                    : const Text('Permission required'),
             trailing: Switch(
-              value: _notificationsEnabled,
+              value:
+                  _stepService.notificationsEnabled &&
+                  _stepService.notificationPermission,
               onChanged: (bool value) {
                 _setNotifications(value);
               },

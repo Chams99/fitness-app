@@ -5,6 +5,7 @@ import '../services/units_service.dart';
 import '../services/edit_state_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import '../services/ai_fitness_advisor_service.dart';
 
 class EditMeasurementsScreen extends StatefulWidget {
   final User user;
@@ -266,49 +267,38 @@ class _EditMeasurementsScreenState extends State<EditMeasurementsScreen> {
     // Check if unit system has changed and update controllers if needed
     _checkAndUpdateForUnitSystemChange();
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Edit Measurements'),
-        actions: [
-          TextButton(onPressed: _saveMeasurements, child: const Text('Save')),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Basic Measurements',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 16),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  children: [
-                    _buildMeasurementField(
-                      UnitsService().weightLabel,
-                      _weightController,
-                      Icons.scale,
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.allow(
-                          RegExp(r'^\d*\.?\d*'),
-                        ),
-                      ],
-                      validator:
-                          (value) => UnitsService().getWeightValidationMessage(
-                            value ?? '',
-                          ),
-                    ),
-                    const SizedBox(height: 16),
-                    if (UnitsService().isMetric) ...[
+    return WillPopScope(
+      onWillPop: () async {
+        await _saveAndExit();
+        return true;
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Edit Measurements'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: _saveAndExit,
+          ),
+        ),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Basic Measurements',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 16),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    children: [
                       _buildMeasurementField(
-                        UnitsService().heightLabel,
-                        _heightController,
-                        Icons.height,
+                        UnitsService().weightLabel,
+                        _weightController,
+                        Icons.scale,
                         keyboardType: TextInputType.number,
                         inputFormatters: [
                           FilteringTextInputFormatter.allow(
@@ -317,16 +307,33 @@ class _EditMeasurementsScreenState extends State<EditMeasurementsScreen> {
                         ],
                         validator:
                             (value) => UnitsService()
-                                .getHeightValidationMessage(value ?? ''),
+                                .getWeightValidationMessage(value ?? ''),
                       ),
-                    ] else ...[
-                      _buildImperialHeightFields(),
+                      const SizedBox(height: 16),
+                      if (UnitsService().isMetric) ...[
+                        _buildMeasurementField(
+                          UnitsService().heightLabel,
+                          _heightController,
+                          Icons.height,
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.allow(
+                              RegExp(r'^\d*\.?\d*'),
+                            ),
+                          ],
+                          validator:
+                              (value) => UnitsService()
+                                  .getHeightValidationMessage(value ?? ''),
+                        ),
+                      ] else ...[
+                        _buildImperialHeightFields(),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -410,11 +417,10 @@ class _EditMeasurementsScreenState extends State<EditMeasurementsScreen> {
     );
   }
 
-  Future<void> _saveMeasurements() async {
-    // Save any pending form changes before creating the user
+  Future<void> _saveAndExit() async {
     _saveCurrentFormValues();
 
-    // Return updated user to previous screen
+    // Create updated user with new measurements
     final updatedUser = User(
       name: widget.user.name,
       goal: widget.user.goal,
@@ -425,41 +431,25 @@ class _EditMeasurementsScreenState extends State<EditMeasurementsScreen> {
       height: _currentHeightInCm,
     );
 
-    // Persist updated user to SharedPreferences
-    await _saveUserToPreferences(updatedUser);
+    // Save to SharedPreferences
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('user', jsonEncode(updatedUser.toJson()));
 
-    // Clear edit state since measurements are saved
-    EditStateService().clearEditState();
+    // Update AI advisor profile with new measurements
+    final aiService = AIFitnessAdvisorService();
+    final currentProfile = aiService.currentProfile;
+    if (currentProfile != null) {
+      final updatedProfile = currentProfile.copyWith(
+        weight: _currentWeightInKg,
+        height: _currentHeightInCm,
+      );
+      await aiService.setProfile(updatedProfile);
+      // Force recalculation of recommendations
+      await aiService.generateRecommendations(updatedProfile);
+    }
 
-    print(
-      'DEBUG: Saved user with weight: ${updatedUser.weight}kg, height: ${updatedUser.height}cm',
-    );
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Measurements saved successfully!'),
-        backgroundColor: Colors.green,
-      ),
-    );
-    Navigator.pop(context, updatedUser);
-  }
-
-  Future<void> _saveUserToPreferences(User user) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final userMap = {
-        'name': user.name,
-        'goal': user.goal,
-        'dailySteps': user.dailySteps,
-        'dailyCalories': user.dailyCalories,
-        'dailyWorkoutMinutes': user.dailyWorkoutMinutes,
-        'weight': user.weight,
-        'height': user.height,
-      };
-      await prefs.setString('user', jsonEncode(userMap));
-      print('DEBUG: User data saved to SharedPreferences');
-    } catch (e) {
-      print('DEBUG: Error saving user data: $e');
+    if (mounted) {
+      Navigator.pop(context, updatedUser);
     }
   }
 }
